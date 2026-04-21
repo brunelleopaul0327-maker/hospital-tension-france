@@ -4,3 +4,4 @@ python-dotenv
 pyarrow
 ipykernel
 matplotlib
+seaborn
