@@ -5,3 +5,5 @@ pyarrow
 ipykernel
 matplotlib
 seaborn
+xgboost
+scikit-learn
