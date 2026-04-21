@@ -1,0 +1,13 @@
+# Environnement virtuel
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+
+# Données (on ne versionnne jamais les données brutes)
+data/raw/
+data/processed/
+
+# Variables d'environnement (clés API etc.)
+.env
