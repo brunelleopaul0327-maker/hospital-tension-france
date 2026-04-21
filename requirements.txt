@@ -2,3 +2,5 @@ pandas>=2.0
 requests
 python-dotenv
 pyarrow
+ipykernel
+matplotlib
