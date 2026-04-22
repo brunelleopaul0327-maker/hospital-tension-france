@@ -3,33 +3,64 @@ import pandas as pd
 import joblib
 import matplotlib.pyplot as plt
 import numpy as np
+from sklearn.metrics import mean_absolute_error
 
-# ── Configuration de la page ───────────────────────────────────────────────
+# ── Configuration ───────────────────────────────────────────────
 st.set_page_config(
-    page_title="Tension Hospitalière France",
+    page_title="Validation Modèle Tension Hospitalière",
     page_icon="🏥",
     layout="wide"
 )
 
-# ── Titre ──────────────────────────────────────────────────────────────────
-st.title("🏥 Analyse et Prédiction de la Tension Hospitalière en France")
-st.markdown("Prédiction du taux d'occupation des soins critiques à **J+7** par région")
+# ── Titre ──────────────────────────────────────────────────────
+st.title("🏥 Validation du Modèle de Tension Hospitalière")
+st.markdown(
+    "Comparaison des **prédictions à J+7** avec les **valeurs réelles sur 2023**, par région."
+)
 
-# ── Chargement des données ─────────────────────────────────────────────────
+# ── Chargement des données ─────────────────────────────────────
 @st.cache_data
 def load_data():
     return pd.read_parquet("data/processed/hopitaux_clean.parquet")
 
-@st.cache_resource
-def load_model():
-    model = joblib.load("data/processed/model_final.joblib")
-    features = joblib.load("data/processed/features_final.joblib")
-    return model, features
-
 df = load_data()
-model, features = load_model()
 
-# ── Noms des régions ───────────────────────────────────────────────────────
+# ── Fonction de feature engineering ────────────────────────────
+def create_features(df):
+    df = df.copy()
+    df = df.sort_values(["reg", "jour"]).reset_index(drop=True)
+    
+    df["lag_1"] = df.groupby("reg")["tx_prev_SC"].shift(1)
+    df["lag_7"] = df.groupby("reg")["tx_prev_SC"].shift(7)
+    df["lag_14"] = df.groupby("reg")["tx_prev_SC"].shift(14)
+    
+    df["rolling_7"] = df.groupby("reg")["tx_prev_SC"].rolling(7).mean().reset_index(level=0, drop=True)
+    df["rolling_14"] = df.groupby("reg")["tx_prev_SC"].rolling(14).mean().reset_index(level=0, drop=True)
+    
+    df["rolling_std_7"] = df.groupby("reg")["tx_prev_SC"].rolling(7).std().reset_index(level=0, drop=True)
+    
+    df["tendance_7j"] = df.groupby("reg")["tx_prev_SC"].diff(7)
+    
+    return df
+
+df = create_features(df)
+
+# ── Features utilisées ─────────────────────────────────────────
+features = [
+    "lag_1", "lag_7", "lag_14",
+    "rolling_7", "rolling_14",
+    "rolling_std_7",
+    "mois", "semaine",
+    "tx_prev_hosp",
+    "tendance_7j"
+]
+
+# ── Chargement modèle par région ───────────────────────────────
+@st.cache_resource
+def load_model(region_code):
+    return joblib.load(f"data/processed/models_regions/model_region_{region_code}.joblib")
+
+# ── Noms des régions ───────────────────────────────────────────
 regions = {
     1: "Guadeloupe", 2: "Martinique", 3: "Guyane", 4: "La Réunion",
     6: "Mayotte", 11: "Île-de-France", 24: "Centre-Val de Loire",
@@ -39,78 +70,87 @@ regions = {
     93: "PACA", 94: "Corse"
 }
 
-# ── Sidebar ────────────────────────────────────────────────────────────────
+# ── Sidebar ────────────────────────────────────────────────────
 st.sidebar.header("Paramètres")
 region_nom = st.sidebar.selectbox("Choisir une région", list(regions.values()))
 region_code = [k for k, v in regions.items() if v == region_nom][0]
 
-# ── Filtrer les données pour la région ────────────────────────────────────
-df_region = df[df["reg"] == region_code].sort_values("jour").copy()
+# ── Charger modèle ─────────────────────────────────────────────
+model = load_model(region_code)
 
-# ── Graphique historique ───────────────────────────────────────────────────
+# ── Filtrer données région ─────────────────────────────────────
+df_region = df[df["reg"] == region_code].copy()
+df_region = df_region.sort_values("jour").reset_index(drop=True)
+
+# ── Historique ─────────────────────────────────────────────────
 st.subheader(f"📈 Historique — {region_nom}")
+
 fig, ax = plt.subplots(figsize=(12, 4))
 ax.plot(df_region["jour"], df_region["tx_prev_SC"], color="steelblue")
 ax.set_xlabel("Date")
 ax.set_ylabel("Taux soins critiques")
-ax.set_title(f"Taux d'occupation soins critiques — {region_nom}")
+ax.set_title("Historique du taux d'occupation")
 st.pyplot(fig)
 
+# ── Prédictions 2023 ───────────────────────────────────────────
+st.subheader(f"📊 Validation du modèle (2023) — {region_nom}")
 
-# ── Prédiction J+7 ─────────────────────────────────────────────────────────
-st.subheader(f"🔮 Prédiction J+7 — {region_nom}")
+# target
+df_region["cible"] = df_region["tx_prev_SC"].shift(-7)
 
-# Prendre les dernières valeurs connues pour faire la prédiction
-derniere_ligne = df_region.iloc[-1]
+# données 2023
+df_2023 = df_region[df_region["annee"] == 2023].copy()
 
-# Calculer les features nécessaires
-lag_1 = derniere_ligne["tx_prev_SC"]
-tx_prev_hosp = derniere_ligne["tx_prev_hosp"]
-tendance_7j = df_region["tx_prev_SC"].iloc[-1] - df_region["tx_prev_SC"].iloc[-7]
-tendance_14j = df_region["tx_prev_SC"].iloc[-1] - df_region["tx_prev_SC"].iloc[-14]
+# nettoyage
+df_2023 = df_2023.dropna(subset=features + ["cible"])
 
-# Créer le dataframe de prédiction
-X_pred = pd.DataFrame([[lag_1, tx_prev_hosp, tendance_7j, tendance_14j, region_code]], 
-                       columns=features)
+# prédictions
+X = df_2023[features]
+df_2023["prediction"] = model.predict(X)
 
-prediction = model.predict(X_pred)[0]
+# recalage temporel
+df_2023["date_cible"] = df_2023["jour"] + pd.Timedelta(days=7)
 
-# ── Niveau d'alerte ────────────────────────────────────────────────────────
-if prediction < 2:
-    niveau = "🟢 Faible"
-    couleur = "green"
-elif prediction < 4:
-    niveau = "🟡 Modéré"
-    couleur = "orange"
-else:
-    niveau = "🔴 Élevé"
-    couleur = "red"
-
-# ── Affichage ──────────────────────────────────────────────────────────────
-col1, col2, col3 = st.columns(3)
-col1.metric("Taux actuel", f"{lag_1:.2f}")
-col2.metric("Prédiction J+7", f"{prediction:.2f}", f"{prediction - lag_1:+.2f}")
-col3.metric("Niveau d'alerte", niveau)
-
-
-
-
-
-
-# ── Graphique prédiction vs historique récent ──────────────────────────────
-st.subheader("📊 Historique récent et prédiction")
-
-# 60 derniers jours
-df_recent = df_region.tail(60).copy()
-derniere_date = df_recent["jour"].iloc[-1]
-date_prediction = derniere_date + pd.Timedelta(days=7)
-
+# ── Graphique réel vs prédiction ───────────────────────────────
 fig2, ax2 = plt.subplots(figsize=(12, 4))
-ax2.plot(df_recent["jour"], df_recent["tx_prev_SC"], color="steelblue", label="Historique")
-ax2.scatter(date_prediction, prediction, color="red", zorder=5, s=100, label=f"Prédiction J+7 : {prediction:.2f}")
-ax2.axvline(derniere_date, color="gray", linestyle="--", alpha=0.5, label="Aujourd'hui")
+
+ax2.plot(
+    df_2023["date_cible"],
+    df_2023["cible"],
+    label="Réel",
+    color="black"
+)
+
+ax2.plot(
+    df_2023["date_cible"],
+    df_2023["prediction"],
+    label="Prédiction",
+    color="red"
+)
+
+ax2.set_title("Prédictions vs Réel (J+7)")
 ax2.set_xlabel("Date")
 ax2.set_ylabel("Taux soins critiques")
 ax2.legend()
-plt.tight_layout()
+
 st.pyplot(fig2)
+
+# ── Métriques ─────────────────────────────────────────────────
+mae = mean_absolute_error(df_2023["cible"], df_2023["prediction"])
+mean_value = df_2023["cible"].mean()
+
+if mean_value != 0:
+    mae_relatif = mae / mean_value
+else:
+    mae_relatif = np.nan
+
+col1, col2 = st.columns(2)
+col1.metric("MAE 2023", f"{mae:.3f}")
+col2.metric("MAE relatif", f"{mae_relatif:.2%}" if not np.isnan(mae_relatif) else "N/A")
+
+# ── Erreur dans le temps ───────────────────────────────────────
+st.subheader("📉 Erreur du modèle")
+
+df_2023["erreur"] = df_2023["prediction"] - df_2023["cible"]
+
+st.line_chart(df_2023.set_index("date_cible")["erreur"])
