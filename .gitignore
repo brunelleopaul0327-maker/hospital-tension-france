@@ -13,6 +13,8 @@ data/processed/*
 !data/processed/model_final.joblib
 !data/processed/features_final.joblib
 !data/processed/hopitaux_clean.parquet
+!data/processed/models_regions/
+!data/processed/models_regions/*.joblib
 
 # Variables d'environnement (clés API etc.)
 .env
