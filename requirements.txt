@@ -7,3 +7,6 @@ matplotlib
 seaborn
 xgboost
 scikit-learn
+lightgbm
+streamlit
+joblib
