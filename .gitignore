@@ -5,9 +5,14 @@
 __pycache__/
 *.pyc
 
-# Données (on ne versionnne jamais les données brutes)
-data/raw/
-data/processed/
+# Données brutes (trop lourdes)
+data/raw/*
+
+# Données processed — on garde le modèle et le parquet
+data/processed/*
+!data/processed/model_final.joblib
+!data/processed/features_final.joblib
+!data/processed/hopitaux_clean.parquet
 
 # Variables d'environnement (clés API etc.)
 .env
